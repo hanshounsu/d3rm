@@ -9,9 +9,7 @@ import logging
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.utilities import rank_zero_only
-from timm.utils.model import get_state_dict, unwrap_model
-from timm.utils.model_ema import ModelEmaV2
+from typing import Dict, Optional
 
 # from ...utils.logger import log_main_process
 
@@ -28,79 +26,131 @@ class EMACallback(Callback):
 
     def __init__(self, decay=0.9999, use_ema_weights: bool = True, update_interval: int = 1):
         self.decay = decay
-        self.ema = None
+        # Shadow copies of trainable parameters, keyed by parameter name.
+        # We intentionally avoid deepcopy'ing the LightningModule (it contains Trainer/DDP
+        # references once fitting starts, which makes deepcopy fragile).
+        self.ema_state: Optional[Dict[str, torch.Tensor]] = None
         self.use_ema_weights = use_ema_weights
         self.update_interval = update_interval
+        self.collected_params: Optional[Dict[str, torch.Tensor]] = None
+        self._loaded_ema_state_cpu: Optional[Dict[str, torch.Tensor]] = None
 
     def on_fit_start(self, trainer, pl_module):
-        "Initialize `ModelEmaV2` from timm to keep a copy of the moving average of the weights"
-        self.ema = ModelEmaV2(pl_module, decay=self.decay, device=None)
+        "Initialize EMA shadow parameters."
+        self._init_ema_state(pl_module)
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         "Update the stored parameters using a moving average"
-        # Update currently maintained parameters.
         if (trainer.global_step + 1) % self.update_interval == 0:
-            self.ema.update(pl_module)
+            self._update_ema(pl_module)
 
     def on_validation_epoch_start(self, trainer, pl_module):
         "do validation using the stored parameters"
         # save original parameters before replacing with EMA version
-        self.store(pl_module.parameters())
+        self.store(pl_module)
 
         # update the LightningModule with the EMA weights
         # ~ Copy EMA parameters to LightningModule
-        self.copy_to(self.ema.module.parameters(), pl_module.parameters())
+        self.copy_to(pl_module)
 
     def on_validation_end(self, trainer, pl_module):
         "Restore original parameters to resume training later"
-        self.restore(pl_module.parameters())
+        self.restore(pl_module)
 
     def on_train_end(self, trainer, pl_module):
         # update the LightningModule with the EMA weights
         if self.use_ema_weights:
-            self.copy_to(self.ema.module.parameters(), pl_module.parameters())
+            self.copy_to(pl_module)
             print("Model weights replaced with the EMA version.")
             # log_main_process(_logger, logging.INFO, msg)
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
-        if self.ema is not None:
-            # print("Saving EMA weights to checkpoint.")
-            checkpoint["state_dict_ema"] = get_state_dict(self.ema, unwrap_model)
-            # return {"state_dict_ema": get_state_dict(self.ema, unwrap_model)}
+        if self.ema_state is not None:
+            # Keep legacy key name used by this project.
+            checkpoint["state_dict_ema"] = {k: v.detach().cpu() for k, v in self.ema_state.items()}
 
     # def on_load_checkpoint(self, callback_state):
     #     if self.ema is not None:
     #         self.ema.module.load_state_dict(callback_state["state_dict_ema"])
     def on_load_checkpoint(self, trainer, pl_module, checkpoint):
-        if self.ema is None:
-            self.ema = ModelEmaV2(pl_module, decay=self.decay, device=None)
-        if "state_dict_ema" in checkpoint:
-            self.ema.module.load_state_dict(checkpoint["state_dict_ema"])
+        state = checkpoint.get("state_dict_ema", None)
+        if isinstance(state, dict):
+            # Defer moving to device until on_fit_start, when parameters exist & have device.
+            self._loaded_ema_state_cpu = {
+                k: v.detach().cpu() if torch.is_tensor(v) else v
+                for k, v in state.items()
+                if torch.is_tensor(v)
+            }
 
-    def store(self, parameters):
+    def store(self, pl_module):
         "Save the current parameters for restoring later."
-        self.collected_params = [param.clone() for param in parameters]
+        self.collected_params = {
+            name: param.detach().clone()
+            for name, param in pl_module.named_parameters()
+            if param.requires_grad
+        }
 
-    def restore(self, parameters):
+    def restore(self, pl_module):
         """
         Restore the parameters stored with the `store` method.
         Useful to validate the model with EMA parameters without affecting the
         original optimization process.
         """
-        for c_param, param in zip(self.collected_params, parameters):
-            param.data.copy_(c_param.data)
+        if not self.collected_params:
+            return
+        for name, param in pl_module.named_parameters():
+            if param.requires_grad and name in self.collected_params:
+                param.data.copy_(self.collected_params[name].data)
 
-    def copy_to(self, shadow_parameters, parameters):
-        "Copy current parameters into given collection of parameters."
-        for s_param, param in zip(shadow_parameters, parameters):
-            if param.requires_grad:
-                param.data.copy_(s_param.data)
+    def copy_to(self, pl_module):
+        "Copy EMA shadow params into the model."
+        if self.ema_state is None:
+            self._init_ema_state(pl_module)
+        if self.ema_state is None:
+            return
+        for name, param in pl_module.named_parameters():
+            if param.requires_grad and name in self.ema_state:
+                param.data.copy_(self.ema_state[name].data)
 
     def on_test_epoch_start(self, trainer, pl_module): # TODO: check if this works
         "Use EMA parameters during testing"
-        self.store(pl_module.parameters())  # Save original parameters
-        self.copy_to(self.ema.module.parameters(), pl_module.parameters())  # Apply EMA weights
+        self.store(pl_module)  # Save original parameters
+        self.copy_to(pl_module)  # Apply EMA weights
 
     def on_test_epoch_end(self, trainer, pl_module):  # TODO: check if this works
         "Restore original parameters after testing"
-        self.restore(pl_module.parameters())
+        self.restore(pl_module)
+
+    def _init_ema_state(self, pl_module):
+        if self.ema_state is None:
+            self.ema_state = {
+                name: param.detach().clone()
+                for name, param in pl_module.named_parameters()
+                if param.requires_grad
+            }
+
+        # If we loaded EMA tensors from a checkpoint, apply them now.
+        if self._loaded_ema_state_cpu:
+            for name, param in pl_module.named_parameters():
+                if not param.requires_grad:
+                    continue
+                if name in self._loaded_ema_state_cpu:
+                    self.ema_state[name] = self._loaded_ema_state_cpu[name].to(
+                        device=param.device, dtype=param.dtype
+                    )
+            self._loaded_ema_state_cpu = None
+
+    @torch.no_grad()
+    def _update_ema(self, pl_module):
+        if self.ema_state is None:
+            self._init_ema_state(pl_module)
+        if self.ema_state is None:
+            return
+        d = float(self.decay)
+        for name, param in pl_module.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name not in self.ema_state:
+                self.ema_state[name] = param.detach().clone()
+                continue
+            self.ema_state[name].mul_(d).add_(param.detach(), alpha=(1.0 - d))

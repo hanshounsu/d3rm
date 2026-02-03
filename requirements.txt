@@ -14,6 +14,7 @@ torchvision==0.16.2
 lightning
 numpy==1.25.2
 timm
+pretty_midi
 
 # Install manually
 # natten==0.15.1+torch210cu121 -f https://shi-labs.com/natten/wheels/

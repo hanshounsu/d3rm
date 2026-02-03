@@ -155,6 +155,7 @@ class D3RM(DiscreteDiffusion):
         for n in range(len(frame_outs)):
             pred = frame_outs[n].detach().cpu().numpy()
             np.savez(Path(self.test_save_path) / (Path(batch['path'][n]).stem + '.npz'), pred=pred)
+            print(f'Saved test result to {Path(self.test_save_path) / (Path(batch["path"][n]).stem + ".npz")}')
 
     def sample_func(self, audio, visualize_denoising=False):
         tic = time.time()

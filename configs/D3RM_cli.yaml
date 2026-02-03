@@ -8,7 +8,7 @@ trainer:
   gradient_clip_algorithm: norm
   gradient_clip_val: 1.0
   accumulate_grad_batches: 1
-  devices: 2
+  devices: 8
   accelerator: gpu
   strategy: ddp
   log_every_n_steps: 10
@@ -97,7 +97,7 @@ model:
 data:
   data_dir: './data/maestro-v3.0.0'
   batch_size: 4
-  num_workers: 12
+  num_workers: 4
   # train: True
   # validation: True
   # test: True
