@@ -16,7 +16,7 @@ Current project is based on pytorch-lightning 2.5.0, and an older version of nat
 
 ## Model Download
 * Pretrained NAR-HC baseline model [[link](https://drive.google.com/file/d/1puA0CkXGioXs9OrS1w-AvwN71yi2cxae/view?usp=sharing)]
-* Pretrained D3RM model (To appear) [[link](https://drive.google.com/file/d/1qOrbWvaiv0AwRJq2naZV-hijqAuNFmh2/view?usp=sharing)] 
+* Pretrained D3RM model [[link](https://drive.google.com/file/d/1qOrbWvaiv0AwRJq2naZV-hijqAuNFmh2/view?usp=sharing)] 
 
 Place the pretrained D3RM model in ./checkpoints/pretrained/
 
