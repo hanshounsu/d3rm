@@ -12,11 +12,11 @@ Regarding the reproducement of the paper, please let me know your concerns and f
 git clone https://github.com/hanshounsu/d3rm.git
 pip -r install requirements.txt
 ```
-Current project is based on pytorch-lightning 2.5.0.
+Current project is based on pytorch-lightning 2.5.0, and an older version of natten (natten==0.15.1). You need to manually download the previous version of natten package after installing requirements.txt. (check the requirements.txt file)
 
 ## Model Download
 * Pretrained NAR-HC baseline model [[link](https://drive.google.com/file/d/1puA0CkXGioXs9OrS1w-AvwN71yi2cxae/view?usp=sharing)]
-* Pretrained D3RM model (To appear) [[link]()] 
+* Pretrained D3RM model (To appear) [[link](https://drive.google.com/file/d/1qOrbWvaiv0AwRJq2naZV-hijqAuNFmh2/view?usp=sharing)] 
 
 Place the pretrained D3RM model in ./checkpoints/pretrained/
 
@@ -32,7 +32,12 @@ python3 main_cli.py fit -c ./configs/D3RM_cli.yaml
 
 ## Inference
 ```shell
-python3 main_cli.py test -c ./logs/{TARGET_EXPERIMENT_CONFIG}
+python3 main_cli.py test -c ./logs/{TARGET_EXPERIMENT_CONFIG_PATH} --ckpt_path {TARGET_EXPERIMENT_CHECKPOINT_PATH}
+```
+
+## Test with checkpoint model
+```shell
+python3 main_cli.py test -c ./configs/D3RM_cli.yaml --ckpt_path ./checkpoints/pretrained/step=0170000-metric_note_with_offsets_f1=0.9464.ckpt
 ```
 
 <!-- ## Acknowledge -->
